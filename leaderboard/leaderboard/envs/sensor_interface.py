@@ -142,8 +142,6 @@ class CallBack(object):
             self._parse_image_cb(data, self._tag)
         elif isinstance(data, carla.libcarla.LidarMeasurement):
             self._parse_lidar_cb(data, self._tag)
-        elif isinstance(data, carla.libcarla.SemanticLidarMeasurement):
-            self._parse_semantic_lidar_cb(data, self._tag)
         elif isinstance(data, carla.libcarla.RadarMeasurement):
             self._parse_radar_cb(data, self._tag)
         elif isinstance(data, carla.libcarla.GnssMeasurement):
@@ -167,12 +165,6 @@ class CallBack(object):
         points = copy.deepcopy(points)
         points = np.reshape(points, (int(points.shape[0] / 4), 4))
         self._data_provider.update_sensor(tag, points, lidar_data.frame)
-
-    def _parse_semantic_lidar_cb(self, semantic_lidar_data, tag):
-        points = np.frombuffer(semantic_lidar_data.raw_data, dtype=np.dtype('f4'))
-        points = copy.deepcopy(points)
-        points = np.reshape(points, (int(points.shape[0] / 6), 6))
-        self._data_provider.update_sensor(tag, points, semantic_lidar_data.frame)
 
     def _parse_radar_cb(self, radar_data, tag):
         # [depth, azimuth, altitute, velocity]
@@ -206,13 +198,11 @@ class CallBack(object):
 class SensorInterface(object):
     def __init__(self):
         self._sensors_objects = {}
-        self._data_buffers = {}
-        self._new_data_buffers = Queue()
-        self._queue_timeout = 10 # default: 10
+        self._data_buffers = Queue()
+        self._queue_timeout = 10
 
         # Only sensor that doesn't get the data on tick, needs special treatment
         self._opendrive_tag = None
-
 
     def register_sensor(self, tag, sensor_type, sensor):
         if tag in self._sensors_objects:
@@ -223,25 +213,25 @@ class SensorInterface(object):
         if sensor_type == 'sensor.opendrive_map': 
             self._opendrive_tag = tag
 
-    def update_sensor(self, tag, data, timestamp):
-        # print("Updating {} - {}".format(tag, timestamp))
+    def update_sensor(self, tag, data, frame):
         if tag not in self._sensors_objects:
             raise SensorConfigurationInvalid("The sensor with tag [{}] has not been created!".format(tag))
 
-        self._new_data_buffers.put((tag, timestamp, data))
+        self._data_buffers.put((tag, frame, data))
 
-    def get_data(self):
-        try: 
+    def get_data(self, frame):
+        """Read the queue to get the sensors data"""
+        try:
             data_dict = {}
             while len(data_dict.keys()) < len(self._sensors_objects.keys()):
-
                 # Don't wait for the opendrive sensor
                 if self._opendrive_tag and self._opendrive_tag not in data_dict.keys() \
                         and len(self._sensors_objects.keys()) == len(data_dict.keys()) + 1:
-                    # print("Ignoring opendrive sensor")
                     break
 
-                sensor_data = self._new_data_buffers.get(True, self._queue_timeout)
+                sensor_data = self._data_buffers.get(True, self._queue_timeout)
+                if sensor_data[1] != frame:
+                    continue
                 data_dict[sensor_data[0]] = ((sensor_data[1], sensor_data[2]))
 
         except Empty:
